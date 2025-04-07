@@ -7,13 +7,19 @@ from PyPDF2 import PdfReader
 from tqdm import tqdm
 from fuzzywuzzy import fuzz
 from langchain.text_splitter import CharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain.vectorstores import FAISS
 from dotenv import load_dotenv
+from langchain.memory import ConversationBufferMemory
+from langchain.chains import ConversationalRetrievalChain
+import streamlit as st
+from langchain.prompts import PromptTemplate
 
 load_dotenv()
 import google.generativeai as gai
 gai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
+
+paper_summaries = []
 
 def sanitize_filename(title):
     return re.sub(r'[<>:"/\\|?*]', '_', title)
@@ -30,6 +36,8 @@ def is_relevant_paper(title, abstract, keyword, threshold=50):
     return match_count / len(keyword_words) > 0.5 or fuzzy_score > threshold
 
 def fetch_and_store_arxiv_papers(query, num_papers, save_path="faiss_index"):
+    global paper_summaries
+    paper_summaries.clear()
     print(f"Searching ArXiv for: {query}")
     search_query = f"all:{query}"
     search = arxiv.Search(
@@ -55,6 +63,12 @@ def fetch_and_store_arxiv_papers(query, num_papers, save_path="faiss_index"):
             if response.status_code == 200:
                 pdf_stream = io.BytesIO(response.content)
                 reader = PdfReader(pdf_stream)
+                title_clean = result.title.strip()
+                abstract_clean = result.summary.strip()
+                paper_summaries.append((title_clean, abstract_clean))
+
+                header_text = f"Title: {title_clean}\n\nAbstract: {abstract_clean}\n"
+                all_chunks.append(header_text)
                 raw_text = ''
                 for page in reader.pages:
                     text = page.extract_text()
@@ -75,4 +89,19 @@ def fetch_and_store_arxiv_papers(query, num_papers, save_path="faiss_index"):
     vector_store = FAISS.from_texts(all_chunks, embedding=embeddings)
     vector_store.save_local(save_path)
     print(f"Stored {len(all_chunks)} chunks to FAISS at '{save_path}'")
+    st.session_state.initial_message = "### Downloaded Papers:\n"
+    for idx, (title, abstract) in enumerate(paper_summaries, start=1):
+        st.session_state.initial_message += f"**{idx}. {title}**\n\n*Abstract:* {abstract}\n\n"
     return True
+def load_conversation_chain(index_path="faiss_index"):
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    vector_store = FAISS.load_local(index_path, embeddings=embeddings, allow_dangerous_deserialization=True)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
+    memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True)
+
+    chain = ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=vector_store.as_retriever(),
+        memory=memory
+    )
+    return chain

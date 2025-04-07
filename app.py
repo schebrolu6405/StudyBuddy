@@ -1,47 +1,39 @@
 import streamlit as st
-from dotenv import load_dotenv
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain.vectorstores import FAISS
-from langchain.chains.question_answering import load_qa_chain
-from langchain.prompts import PromptTemplate
+
+st.set_page_config(page_title='Chat With ArXiv Papers', page_icon='📄')
+
 import os
+from dotenv import load_dotenv
+import google.generativeai as gai
+from Arxiv_call import fetch_and_store_arxiv_papers, load_conversation_chain
+from langchain.schema import HumanMessage, AIMessage
 
 load_dotenv()
-import google.generativeai as gai
 gai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
 
-from Arxiv_call import fetch_and_store_arxiv_papers
 
-def get_conversation_chain():
-    prompt_template = """"You are an AI assistant called 'ArXiv Assist' that has a conversation with the user and answers to questions. "
-                     "Try looking into the research papers content provided to you to respond back. If you could not find any relevant information there, mention something like 'I do not have enough information form the research papers. However, this is what I know...' and then try to formulate a response by your own. "
-                     "There could be cases when user does not ask a question, but it is just a statement. Just reply back normally and accordingly to have a good conversation (e.g. 'You're welcome' if the input is 'Thanks'). "
-                     "If you mention the name of a paper, provide an arxiv link to it. "
-                     "Be polite, friendly, and format your response well (e.g., use bullet points, bold text, etc.). "
-                     "Below are relevant excerpts from the research papers:
-Context: {context}
+def handle_user_input(user_question):
+    response = st.session_state.conversation({'question': user_question})
+    st.session_state.chat_history = response['chat_history']
 
-Question: {question}
 
-Answer:
-"""
-    model = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
-    prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
-    chain = load_qa_chain(llm=model, chain_type="stuff", prompt=prompt)
-    return chain
-
-def get_answer_from_faiss(user_question, index_path="faiss_index"):
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    vector_store = FAISS.load_local(index_path, embeddings=embeddings, allow_dangerous_deserialization=True)
-    docs = vector_store.similarity_search(user_question)
-    chain = get_conversation_chain()
-    response = chain.run(input_documents=docs, question=user_question)
-    st.write("Answer: ", response)
+    for message in st.session_state.chat_history:
+        if isinstance(message, HumanMessage):
+            with st.chat_message("user"):
+                st.markdown(message.content)
+        elif isinstance(message, AIMessage):
+            with st.chat_message("assistant"):
+                st.markdown(message.content)
 
 def main():
-    st.set_page_config(page_title='Chat With ArXiv Papers', page_icon='📄')
+    
     st.title('📄 Chat With ArXiv Papers')
-
+    if "conversation" not in st.session_state:
+        st.session_state.conversation = None
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = None
+    if "initial_message_displayed" not in st.session_state:
+        st.session_state.initial_message_displayed = False
     with st.sidebar:
         st.header('Retrieve Papers')
         keyword = st.text_input("Enter search keyword")
@@ -50,13 +42,22 @@ def main():
             with st.spinner("Processing papers..."):
                 success = fetch_and_store_arxiv_papers(keyword, num_papers)
                 if success:
+                    st.session_state.conversation = load_conversation_chain()
                     st.success("Papers processed and stored!")
                 else:
                     st.error("No relevant papers found or failed to process.")
-
-    user_question = st.text_input("Ask your question")
+    if "initial_message" in st.session_state and not st.session_state.initial_message_displayed:
+        with st.chat_message("assistant"):
+            st.markdown(st.session_state.initial_message)
+        st.session_state.initial_message_displayed = True
+        
+    user_question = st.chat_input("Ask your question here")
     if user_question:
-        get_answer_from_faiss(user_question)
+        if st.session_state.conversation:
+            handle_user_input(user_question)
+        else:
+            st.warning("Please fetch and process papers first.")
+        #get_answer_from_faiss(user_question)
 
 if __name__ == "__main__":
     main()
