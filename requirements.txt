@@ -1,6 +1,11 @@
-streamlit
-google-generativeai
+requests
 python-dotenv
+Pillow
+IPython
+unstructured
+google-generativeai
 langchain
-PyPDF2
-langchain_google_genai
+langchain-google-genai
+langchain-core
+chromadb
+PyMuPDF
