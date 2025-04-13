@@ -3,36 +3,57 @@ import re
 import io
 import base64
 import requests
+import tempfile
+import uuid
 import dotenv
+import fitz  
 from PIL import Image
-from IPython.display import display, Image as IPImage
+from IPython.display import display, Image as IPImage, HTML
 from unstructured.partition.pdf import partition_pdf
 import google.generativeai as genai
+from collections import defaultdict
 
-from langchain.vectorstores import Chroma
 from langchain.storage import InMemoryStore
+from langchain.vectorstores import Qdrant
 from langchain.schema.document import Document
 from langchain.retrievers.multi_vector import MultiVectorRetriever
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-import uuid
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-import shutil
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, PointStruct, VectorParams, Filter, FieldCondition, MatchValue
+from qdrant_client.http import models
+
 
 dotenv.load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 genai.configure(api_key=GOOGLE_API_KEY)
 
 model_text = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 model_vision = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
-
-persist_path = "./chroma_db"
-shutil.rmtree(persist_path, ignore_errors=True)
-
 embedding_function = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-vectorstore = Chroma(collection_name="multimodal_rag_chunks", embedding_function=embedding_function, persist_directory="./chroma_db")
+
+qdrant_client = QdrantClient(
+    url="https://3da9da71-c9fd-4e77-a222-5e9fee093b8a.us-west-1-0.aws.cloud.qdrant.io:6333", 
+    api_key=QDRANT_API_KEY,
+)
+
+collection_name = "multimodal_rag_chunks"
+
+qdrant_client.delete_collection(collection_name=collection_name)
+collection_config = models.VectorParams(size=768, distance=Distance.COSINE)
+qdrant_client.create_collection(collection_name=collection_name, vectors_config=collection_config)
+
+vectorstore = Qdrant(
+    client=qdrant_client,
+    collection_name=collection_name,
+    embeddings=embedding_function,
+)
+
 docstore = InMemoryStore()
 id_key = "doc_id"
 retriever = MultiVectorRetriever(vectorstore=vectorstore, docstore=docstore, id_key=id_key)
+
 
 def get_images(chunks):
     images = []
@@ -68,17 +89,16 @@ def summarize_image_base64(base64_code):
     response = model_vision.generate_content([prompt, img])
     return response.text.strip()
 
-import tempfile
-import fitz
-import base64
+def summarize_table_html(html, caption=None):
+    if caption:
+        prompt = f"You are a scientific research assistant. Below is a table extracted from a research paper.\nCaption: \"{caption}\"\nPlease summarize the table's key contents and what it reveals."
+    else:
+        prompt = "You are a research assistant. Summarize the following table from a scientific paper."
+    response = model_text.generate_content([prompt, html])
+    return response.text.strip()
 
 def process_pdf_url(pdf_url, output_path="./output"):
-    """
-    Downloads and processes a PDF from the given URL.
-    Extracts figure captions and chunks the content using Unstructured's partition_pdf.
-    """
     os.makedirs(output_path, exist_ok=True)
-
     response = requests.get(pdf_url)
     response.raise_for_status()  # Raise error for bad responses
 
@@ -97,8 +117,26 @@ def process_pdf_url(pdf_url, output_path="./output"):
             text = block[4].strip()
             if re.match(r'^Figure\s*\d+', text, re.IGNORECASE):
                 captions.append((page_num, text))
+    tablecaptions = []
+    for page_num, page in enumerate(doc, start=1):
+        blocks = page.get_text("blocks")
+        for block in blocks:
+            text = block[4].strip()
+            if re.match(r'^Table\s*\d+', text, re.IGNORECASE):
+                tablecaptions.append((page_num, text))
 
-    # Chunk the PDF content using unstructured
+    grouped = defaultdict(list)
+    for _, text in tablecaptions:
+        match = re.match(r"^(Table \d+):", text)
+        if match:
+            key = match.group(1)
+            grouped[key].append(text)
+
+    combined_captions = {
+        table: " ".join(lines) for table, lines in grouped.items()
+    }
+    combined_table_captions = list(combined_captions.values())
+
     chunks = partition_pdf(
         filename=pdf_path,
         infer_table_structure=True,
@@ -113,13 +151,22 @@ def process_pdf_url(pdf_url, output_path="./output"):
     )
 
     texts = [chunk.text for chunk in chunks if "CompositeElement" in str(type(chunk)) and chunk.text]
-    tables = [chunk.text for chunk in chunks if "Table" in str(type(chunk))]
-
     images = get_images(chunks)
 
-    text_summaries = [summarize_text_element(text) for text in texts]
-    table_summaries = [summarize_text_element(table) for table in tables]
+    raw_tables = partition_pdf(
+        filename=pdf_path,
+        infer_table_structure=True,
+        strategy="hi_res"
+    )
+    tables = [tab for tab in raw_tables if tab.category == "Table" and hasattr(tab.metadata, "text_as_html")]
+    tables_html = [tab.metadata.text_as_html for tab in tables]
 
+    table_summaries = [
+        summarize_table_html(tab.metadata.text_as_html, caption)
+        for tab, caption in zip(tables, combined_table_captions)
+    ]
+
+    text_summaries = [summarize_text_element(text) for text in texts]
     image_summaries = []
 
     for i, img in enumerate(images):
@@ -127,29 +174,22 @@ def process_pdf_url(pdf_url, output_path="./output"):
         summary = summarize_image_base64(img["base64"])
         image_summaries.append(summary)
 
-    text_ids = [str(uuid.uuid4()) for _ in texts]
-    retriever.vectorstore.add_documents([
-        Document(page_content=s, metadata={id_key: text_ids[i]})
-        for i, s in enumerate(text_summaries)
-    ])
-    retriever.docstore.mset(list(zip(text_ids, texts)))
+    def store_data(items, summaries):
+        ids = [str(uuid.uuid4()) for _ in items]
+        retriever.vectorstore.add_documents([
+            Document(page_content=summaries[i], metadata={id_key: ids[i]})
+            for i in range(len(items))
+        ])
+        retriever.docstore.mset(list(zip(ids, items)))
 
+    if texts:
+        store_data(texts, text_summaries)
     if tables:
-        table_ids = [str(uuid.uuid4()) for _ in tables]
-        retriever.vectorstore.add_documents([
-            Document(page_content=s, metadata={id_key: table_ids[i]})
-            for i, s in enumerate(table_summaries)
-        ])
-        retriever.docstore.mset(list(zip(table_ids, tables)))
-    
+        store_data(tables_html, table_summaries)
     if images:
-        image_ids = [str(uuid.uuid4()) for _ in images]
-        retriever.vectorstore.add_documents([
-            Document(page_content=s, metadata={id_key: image_ids[i]})
-            for i, s in enumerate(image_summaries)
-        ])
-        retriever.docstore.mset(list(zip(image_ids, images)))
-    return captions, texts, tables, images, text_summaries, table_summaries, image_summaries
+        store_data(images, image_summaries)
+
+    return texts, text_summaries, images, captions, image_summaries, tables, combined_table_captions, table_summaries
     
 def parse_docs(docs):
     b64, text = [], []
@@ -195,15 +235,19 @@ INSTRUCTIONS:
     prompt_parts = [{"text": prompt_text}]
     image_refs = []
     for idx, image_b64 in enumerate(docs_by_type.get("images", [])):
-        prompt_parts.append({
-            "inline_data": {
-                "mime_type": "image/jpeg",
-                "data": image_b64
-            }
-        })
-        image_refs.append({"id": f"image_{idx+1}", "base64": image_b64})
-
-    # Generate multimodal response with Gemini
+        try:
+            image_bytes = base64.b64decode(image_b64)
+            Image.open(io.BytesIO(image_bytes))  # validate image
+            prompt_parts.append({
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": image_bytes
+                }
+            })
+            image_refs.append({"id": f"image_{idx+1}", "base64": image_b64})
+        except Exception as e:
+            print(f"Skipping invalid image {idx+1}: {e}")
+            continue
     model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
     response = model.generate_content(contents=[{"role": "user", "parts": prompt_parts}])
     return {
@@ -213,9 +257,9 @@ INSTRUCTIONS:
 
 if __name__ == "__main__":
     url = "https://arxiv.org/pdf/1706.03762.pdf"
-    captions, texts, tables, images, text_summaries, table_summaries, image_summaries = process_pdf_url(url)
+    texts, text_summaries, images, captions, image_summaries, tables, combined_table_captions, table_summaries = process_pdf_url(url)
     chain_with_sources = {"context": retriever | RunnableLambda(parse_docs), "question": RunnablePassthrough(),} | RunnablePassthrough().assign(response=RunnableLambda(build_prompt))
-    result = chain_with_sources.invoke("Explain the transformer architecture in the paper.")
+    result = chain_with_sources.invoke("Explain about Embeddings and softmax function. What are the Maximum Path Length of each layer type?")
     print("\n\nResponse:")
     print(result["response"]["text"])
     print("\n\nImages:")
