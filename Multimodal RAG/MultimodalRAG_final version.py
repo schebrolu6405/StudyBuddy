@@ -23,10 +23,14 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams, Filter, FieldCondition, MatchValue
 from qdrant_client.http import models
 
+from sacrebleu import corpus_bleu
+from rouge_score import rouge_scorer
+from bert_score import score
 
 dotenv.load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+QDRANT_URL = os.getenv("QDRANT_URL")
 genai.configure(api_key=GOOGLE_API_KEY)
 
 model_text = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
@@ -34,7 +38,7 @@ model_vision = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 embedding_function = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
 qdrant_client = QdrantClient(
-    url="https://3da9da71-c9fd-4e77-a222-5e9fee093b8a.us-west-1-0.aws.cloud.qdrant.io:6333", 
+    url=QDRANT_URL, 
     api_key=QDRANT_API_KEY,
 )
 
@@ -255,11 +259,60 @@ INSTRUCTIONS:
         "images": image_refs
     }
 
+
+#Evaluation functions
+
+def evaluate_bleu_rouge(candidates, references):
+    bleu_score = corpus_bleu(candidates, [references]).score
+    scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+    rouge_scores = [scorer.score(ref, cand) for ref, cand in zip(references, candidates)]
+    rouge1 = sum([score['rouge1'].fmeasure for score in rouge_scores]) / len(rouge_scores)
+    return bleu_score, rouge1
+
+def evaluate_bert_score(candidates, references):
+    P, R, F1 = score(candidates, references, lang="en", model_type='bert-base-multilingual-cased')
+    return P.mean().item(), R.mean().item(), F1.mean().item()
+
+def evaluate_all(question, response, reference):
+    candidates = [response]
+    references = [reference]
+    bleu, rouge1 = evaluate_bleu_rouge(candidates, references)
+    bert_p, bert_r, bert_f1 = evaluate_bert_score(candidates, references)
+    return {
+            "BLEU": bleu,
+            "ROUGE-1": rouge1,
+            "BERT P": bert_p,
+            "BERT R": bert_r,
+            "BERT F1": bert_f1
+    }
+
+def gemini_score_response(prompt: str, response: str, reference: str):
+    system_prompt = (
+        "You're an expert evaluator. Given a user query, a model response, and a reference answer, "
+        "rate the model response for helpfulness, relevance, and accuracy on a scale of 1-10 each. "
+        "Return a JSON with keys: helpfulness, relevance, accuracy."
+    )
+
+    full_prompt = f"""{system_prompt}
+
+Query: {prompt}
+Model Response: {response}
+Reference Answer: {reference}
+"""
+
+    chat = model_text.start_chat()
+    result = chat.send_message(full_prompt)
+
+    return result.text
+
 if __name__ == "__main__":
     url = "https://arxiv.org/pdf/1706.03762.pdf"
     texts, text_summaries, images, captions, image_summaries, tables, combined_table_captions, table_summaries = process_pdf_url(url)
     chain_with_sources = {"context": retriever | RunnableLambda(parse_docs), "question": RunnablePassthrough(),} | RunnablePassthrough().assign(response=RunnableLambda(build_prompt))
-    result = chain_with_sources.invoke("Explain about Embeddings and softmax function. What are the Maximum Path Length of each layer type?")
+    
+    question = "*** Give Your Question Here ***"
+    
+    result = chain_with_sources.invoke(question)
     print("\n\nResponse:")
     print(result["response"]["text"])
     print("\n\nImages:")
@@ -267,3 +320,22 @@ if __name__ == "__main__":
         if isinstance(item, dict) and "base64" in item:
             print(f"Image {i+1}:")
             display_base64_image(item["base64"])
+    response = result["response"]["text"]
+    
+    reference = "*** Give Original Reference Text Here ***"
+    
+    metrics = evaluate_all(question, response, reference)
+
+    for k, v in metrics.items():
+        if k == 'BLEU':
+            print(f"BLEU measures the overlap between the generated output and reference text based on n-grams. Higher scores indicate better match.score obtained :{v}")
+        elif k == "ROUGE-1":
+            print(f"ROUGE-1 measures the overlap of unigrams between the generated output and reference text. Higher scores indicate better match.Score obtained:{v}") 
+        elif k == 'BERT P':
+            print(f"BERTScore evaluates the semantic similarity between the generated output and reference text using BERT embeddings.")
+
+            print(f"\n\n**BERT Precision**: {metrics['BERT P']}")
+            print(f"**BERT Recall**: {metrics['BERT R']}")
+            print(f"**BERT F1 Score**: {metrics['BERT F1']}")
+    eval_result = gemini_score_response(question, response, reference)
+    print("GPT-based evaluation:\n", eval_result)
