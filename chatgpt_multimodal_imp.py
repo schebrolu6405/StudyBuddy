@@ -32,7 +32,7 @@ import os
 
 # keys for the services we will use
 
-os.environ["OPENAI_API_KEY"] = "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"
+os.environ["OPENAI_API_KEY"] = "*** YOUR_API_KEY HERE ***"
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
