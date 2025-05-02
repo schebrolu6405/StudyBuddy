@@ -1,27 +1,65 @@
-# StudyBuddy
+## 📚 StudyBuddy – Multimodal AI Research Assistant
 
-## Abstract
+### 🔍 Problem Statement
 
-Finding and understanding information in scientific papers is increasingly difficult due to the volume of publications and their complex mix of text, charts, figures, and tables. Reading them manually is time-consuming and inefficient. This project introduces "StudyBuddy," an AI tool designed to simplify and speed up working with scientific papers. It automatically pulls out key information and allows users to interactively ask questions to better understand the content, including visuals.
-StudyBuddy uses Retrieval-Augmented Generation (RAG), which searches the document for relevant sections and uses them to generate helpful answers. It integrates advanced AI models like OpenAI’s GPT-4o and Google’s Gemini 2.0 Flash, which understand both text and images. The system processes PDFs, extracts and summarizes text, tables, and images, and stores them efficiently using ChromaDB and Qdrant. Tools like Langchain and Unstructured manage this workflow.
+Navigating the immense volume of scientific papers has become a growing challenge for students and researchers. These documents often contain complex visual elements like plots, diagrams, and tables that require careful interpretation along with dense textual explanations. Manual reading is time-consuming, inefficient, and limits effective knowledge extraction.
 
-StudyBuddy lets users search directly from the arXiv repository and summarizes all parts of a paper—text, tables, and figures. Users can chat with it and get answers grounded in the paper’s actual content. It excels at displaying images and tables alongside answers, outperforming many existing tools. The tool is available through a user-friendly Streamlit site hosted on Hugging Face Spaces. 
+### 🎯 Project Objective
 
-In summary, StudyBuddy improves research by making complex data more accessible, supporting literature reviews, background research, and methodology comparisons. It helps users work faster and produce higher-quality academic work with confidence.
+**StudyBuddy** is designed to simplify and accelerate the academic research process by using **multimodal Retrieval-Augmented Generation (RAG)** with **large language models (LLMs)**. It processes scientific PDFs from ArXiv and allows users to interactively query the paper, receiving grounded, context-aware answers based on both textual and visual elements.
 
-## Problem Statement
+---
 
-Navigating the ever-growing volume of scientific literature is a significant challenge for researchers and students alike. The standard process requires manually searching for relevant papers, reading through numerous articles, and attempting to synthesize the core findings and methodologies. This manual approach consumes considerable time and effort, often proving inefficient. The challenge is further intensified by the multimodal nature of scientific papers, which frequently rely on complex tables, figures, plots, and technical images that must be carefully interpreted in conjunction with the surrounding text for full comprehension.
+### ⚙️ Key Features
 
-Recognizing these significant problems, the **StudyBuddy** project is designed to transform the research workflow. Its central aim is to make engaging with scientific literature significantly easier and faster than traditional methods allow. It directly confronts the challenges of information volume and multimodal complexity by leveraging AI in several key ways:
+- **Automated Document Parsing**  
+  Extracts structured elements from scientific PDFs including text, tables, figures, and formulas using `Unstructured` and `PyMuPDF`.
 
-### Key Features
+- **Multimodal Summarization**  
+  Summarizes extracted content using **GPT-4o** and **Gemini 2.0 Flash**, enabling rich responses that integrate image and table data.
 
-- **Automated Document Processing**  
-  Utilizing advanced AI tools to automatically analyze the structure and accurately extract content (text, tables, images) from scientific papers.
+- **Context-Grounded Q&A**  
+  Users can ask natural language questions about the paper and get AI-generated responses based on the content (not external data).
 
-- **Multimodal Summarization with Relevant Images in Response**  
-  Intelligently identifying essential information across all modalities and generating clear, concise summaries for text sections, tabular data, and visual figures, thereby simplifying complex data interpretation.
+- **Vector Database Integration**  
+  Uses **ChromaDB** and **Qdrant** to store and retrieve high-dimensional embeddings of text and image content for semantically rich responses.
 
-- **Context-Grounded Q&A (with Image References)**  
-  Offering an interactive capability where users can ask specific questions about the paper and receive direct, AI-generated answers that are explicitly based on the content and context of that single document.
+- **Streamlit Interface**  
+  A user-friendly front-end built with Streamlit, deployed on Hugging Face Spaces for zero-setup usage.
+
+---
+
+### 🧠 Model Architecture
+
+- **LLMs Used**:  
+  - GPT-4o (OpenAI) – For native multimodal understanding  
+  - Gemini 2.0 Flash (Google) – For cost-efficient image + text responses
+
+- **Pipeline**:  
+  1. Retrieve relevant PDFs from ArXiv  
+  2. Parse and chunk into images, tables, text  
+  3. Store embeddings in vector DB  
+  4. On query, fetch relevant content  
+  5. Generate structured answer via LLM
+
+---
+
+### 🌐 Resources
+
+- 📄 [Project Report (PDF)](https://docs.google.com/document/d/1_4LfmFB85sGBVFCVP_1cCqba1IYvdhb2I4vMa9eugHw/edit?usp=sharing)  
+- 🌐 [Website](https://dipsydhanda.wixsite.com/studdy-buddy)  
+- 📽️ [Demo Video](https://youtu.be/wF4oBphiWvE)  
+- 📊 [Presentation](https://docs.google.com/presentation/d/1koWmY0ey6sUFsV9JUEnUeBpvmLZ71exClh6TueN5gKc)  
+- 📚 [arXiv](https://arxiv.org/)
+
+---
+
+### 👥 Contributors
+
+
+- **Anurima Saha** – GPT-4 RAG, Evaluation, Presentation
+- **Susheel Chebrolu** – Data collection (ArXiv), Gemini-based RAG, Report  
+- **Dipsy** – Streamlit Integration, Website, Application UI
+
+---
+
