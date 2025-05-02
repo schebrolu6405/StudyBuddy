@@ -1,6 +1,6 @@
 # StudyBuddy
 
-Abstract
+# Abstract
 Finding and understanding information in scientific papers is increasingly difficult due to the volume of publications and their complex mix of text, charts, figures, and tables. Reading them manually is time-consuming and inefficient. This project introduces "StudyBuddy," an AI tool designed to simplify and speed up working with scientific papers. It automatically pulls out key information and allows users to interactively ask questions to better understand the content, including visuals.
 StudyBuddy uses Retrieval-Augmented Generation (RAG), which searches the document for relevant sections and uses them to generate helpful answers. It integrates advanced AI models like OpenAI’s GPT-4o and Google’s Gemini 2.0 Flash, which understand both text and images. The system processes PDFs, extracts and summarizes text, tables, and images, and stores them efficiently using ChromaDB and Qdrant. Tools like Langchain and Unstructured manage this workflow.
 StudyBuddy lets users search directly from the arXiv repository and summarizes all parts of a paper—text, tables, and figures. Users can chat with it and get answers grounded in the paper’s actual content. It excels at displaying images and tables alongside answers, outperforming many existing tools. The tool is available through a user-friendly Streamlit site hosted on Hugging Face Spaces.
